@@ -1,0 +1,56 @@
+## Interface: 11200
+## Title: DPSLight |cFF00FF00Advanced|r
+## Notes: Advanced combat tracker with Dispels/Decurse/Deaths tracking
+## Notes-frFR: Tracker de combat avancé avec suivi Dispels/Decurse/Deaths
+## Author: Optimized Fork
+## Version: 1.1.1
+## SavedVariables: DPSLightDB, DPSLightSettings
+## SavedVariablesPerCharacter: DPSLightCharDB
+## OptionalDeps: SuperWoW
+
+# Core System
+Core\ObjectPool.lua
+Core\EventEngine.lua
+Core\DataStore.lua
+Core\Config.lua
+Core\Utils.lua
+Core\Database.lua
+Core\AdvancedStats.lua
+Core\BossDetector.lua
+Core\Reporter.lua
+
+# Parser System
+Parser\PatternCache.lua
+Parser\ParserClassic.lua
+Parser\ParserOptimized.lua
+Parser\ParserMain.lua
+
+# Locales
+Locales\enUS.lua
+Locales\frFR.lua
+
+# Data Modules
+Modules\ModuleBase.lua
+Modules\Damage.lua
+Modules\DamageTaken.lua
+Modules\Healing.lua
+Modules\HealingTaken.lua
+Modules\Deaths.lua
+Modules\Dispels.lua
+Modules\Decurse.lua
+
+# Sync System
+Sync\Compression.lua
+Sync\DiffSync.lua
+
+# UI System
+UI\FramePool.lua
+UI\VirtualScroll.lua
+UI\ClassIcons.lua
+UI\MinimapButton.lua
+UI\MainMenu.lua
+UI\MainFrame.lua
+UI\DetailFrame.lua
+
+# Main Init
+DPSLight.lua

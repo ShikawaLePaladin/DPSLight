@@ -337,20 +337,10 @@ function MainMenu:CreateConfigTab()
             this.isCollapsed = not this.isCollapsed
             if this.isCollapsed then
                 this.indicator:SetText("[+]")
-                -- Hide all content in this section
-                for _, frame in ipairs(this.content) do
-                    if frame and frame.Hide then
-                        frame:Hide()
-                    end
-                end
+                if this.container then this.container:Hide() end
             else
                 this.indicator:SetText("[-]")
-                -- Show all content in this section
-                for _, frame in ipairs(this.content) do
-                    if frame and frame.Show then
-                        frame:Show()
-                    end
-                end
+                if this.container then this.container:Show() end
             end
 
             -- Reposition all sections dynamically
@@ -368,27 +358,85 @@ function MainMenu:CreateConfigTab()
     -- Table to track all sections for dynamic repositioning
     local allSections = {}
 
+    -- Forward declaration
+    local function RepositionSections() end
+
+    -- Lay out all content frames inside a section within a dedicated container
+    local function LayoutSectionContent(section)
+        if not section or not section.content then return end
+
+        if not section.container then
+            section.container = CreateFrame("Frame", nil, scrollChild)
+            section.container:SetWidth(630)
+        end
+
+        local container = section.container
+        container:SetParent(scrollChild)
+        container:ClearAllPoints()
+        container:SetPoint("TOPLEFT", section, "BOTTOMLEFT", 0, -6)
+        container:SetPoint("TOPRIGHT", section, "BOTTOMRIGHT", 0, -6)
+
+        local currentY = -4
+        local totalHeight = 0
+
+        for _, frame in ipairs(section.content) do
+            if frame then
+                local _, _, _, xOfs = frame:GetPoint()
+                local indent = xOfs or 0
+
+                frame:SetParent(container)
+                frame:ClearAllPoints()
+                frame:SetPoint("TOPLEFT", container, "TOPLEFT", indent, currentY)
+
+                local frameHeight = frame:GetHeight() or 20
+                if frameHeight == 0 and frame.GetHeight then
+                    frameHeight = frame:GetHeight() or 20
+                end
+
+                currentY = currentY - (frameHeight + 6)
+                totalHeight = totalHeight + frameHeight + 6
+                frame:Show()
+            end
+        end
+
+        if totalHeight < 0 then totalHeight = 0 end
+        container:SetHeight(totalHeight + 4)
+        section.contentHeight = container:GetHeight()
+    end
+
     -- Function to reposition all sections dynamically
-    local function RepositionSections()
+    function RepositionSections()
         local currentY = -50
         for _, section in ipairs(allSections) do
             section:ClearAllPoints()
             section:SetPoint("TOP", scrollChild, "TOP", 0, currentY)
             currentY = currentY - 40
 
-            -- Calculate content height if section is expanded
-            if not section.isCollapsed then
-                local contentHeight = 0
-                for _, frame in ipairs(section.content) do
-                    if frame and frame:IsVisible() then
-                        local frameHeight = frame:GetHeight() or 25
-                        contentHeight = contentHeight + frameHeight + 5
-                    end
+            if not section.isCollapsed and section.contentHeight then
+                if section.container then
+                    section.container:Show()
+                    section.container:ClearAllPoints()
+                    section.container:SetPoint("TOPLEFT", section, "BOTTOMLEFT", 0, -6)
+                    section.container:SetPoint("TOPRIGHT", section, "BOTTOMRIGHT", 0, -6)
                 end
-                currentY = currentY - contentHeight
+                currentY = currentY - section.contentHeight - 10
+            else
+                if section.container then section.container:Hide() end
+                currentY = currentY - 10
             end
-            currentY = currentY - 10  -- Space between sections
         end
+
+        -- Update scroll child height to avoid clipping
+        local totalHeight = math.abs(currentY) + 80
+        if totalHeight < 800 then totalHeight = 800 end
+        scrollChild:SetHeight(totalHeight)
+    end
+
+    local function LayoutAllSections()
+        for _, section in ipairs(allSections) do
+            LayoutSectionContent(section)
+        end
+        RepositionSections()
     end
 
     -- ========== SECTION: BUTTON VISIBILITY ==========
@@ -722,10 +770,6 @@ function MainMenu:CreateConfigTab()
     end
     filterBtnText:SetText(filterLabels[currentFilterMode])
 
-    -- Show Self Only checkbox
-    local selfOnlyCheck = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
-    table.insert(filtersSection.content, selfOnlyCheck)
-
     -- Hover effects for Filter Mode button
     filterBtn:SetScript("OnEnter", function()
         this:SetBackdropColor(0.3, 0.4, 0.6, 1)  -- Lighter on hover
@@ -809,6 +853,64 @@ function MainMenu:CreateConfigTab()
             end
 
             DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Show self only " .. (checked and "enabled" or "disabled") .. " (value saved: " .. tostring(Database:GetSetting("showSelfOnly")) .. ")", 1, 1, 0)
+        end
+    end)
+    yOffset = yOffset - 30
+
+    -- Pin self at top of lists
+    local pinSelfCheck = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
+    table.insert(filtersSection.content, pinSelfCheck)
+    pinSelfCheck:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 30, yOffset)
+    pinSelfCheck:SetChecked(Database and Database:GetSetting("showSelfOnTop") or false)
+    local pinSelfText = pinSelfCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    pinSelfText:SetPoint("LEFT", pinSelfCheck, "RIGHT", 5, 0)
+    pinSelfText:SetText("Always show me first")
+    pinSelfCheck:SetScript("OnClick", function()
+        if Database then
+            Database:SetSetting("showSelfOnTop", this:GetChecked())
+            local MainFrame = DPSLight_MainFrame
+            if MainFrame then
+                if MainFrame.ReloadSettings then MainFrame:ReloadSettings() end
+                if MainFrame.UpdateDisplay then MainFrame:UpdateDisplay() end
+            end
+            DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Pin self on top " .. (this:GetChecked() and "enabled" or "disabled"), 1, 1, 0)
+        end
+    end)
+    yOffset = yOffset - 30
+
+    -- Merge pet damage with owner
+    local mergePetsCheck = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
+    table.insert(filtersSection.content, mergePetsCheck)
+    mergePetsCheck:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 30, yOffset)
+    mergePetsCheck:SetChecked(Database and Database:GetSetting("mergePetDamage") or false)
+    local mergePetsText = mergePetsCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    mergePetsText:SetPoint("LEFT", mergePetsCheck, "RIGHT", 5, 0)
+    mergePetsText:SetText("Merge pet damage with owner")
+    mergePetsCheck:SetScript("OnClick", function()
+        if Database then
+            Database:SetSetting("mergePetDamage", this:GetChecked())
+            local MainFrame = DPSLight_MainFrame
+            if MainFrame then
+                if MainFrame.ReloadSettings then MainFrame:ReloadSettings() end
+                if MainFrame.UpdateDisplay then MainFrame:UpdateDisplay() end
+            end
+            DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Pet damage merge " .. (this:GetChecked() and "enabled" or "disabled"), 1, 1, 0)
+        end
+    end)
+    yOffset = yOffset - 30
+
+    -- Hide combat chat messages
+    local hideCombatMsgCheck = CreateFrame("CheckButton", nil, scrollChild, "UICheckButtonTemplate")
+    table.insert(filtersSection.content, hideCombatMsgCheck)
+    hideCombatMsgCheck:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 30, yOffset)
+    hideCombatMsgCheck:SetChecked(Database and Database:GetSetting("hideCombatMessages") or false)
+    local hideCombatMsgText = hideCombatMsgCheck:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+    hideCombatMsgText:SetPoint("LEFT", hideCombatMsgCheck, "RIGHT", 5, 0)
+    hideCombatMsgText:SetText("Hide combat start/end messages")
+    hideCombatMsgCheck:SetScript("OnClick", function()
+        if Database then
+            Database:SetSetting("hideCombatMessages", this:GetChecked())
+            DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Combat messages " .. (this:GetChecked() and "hidden" or "shown"), 1, 1, 0)
         end
     end)
     yOffset = yOffset - 40
@@ -1055,6 +1157,7 @@ function MainMenu:CreateConfigTab()
 
     -- Save Settings Button
     local saveBtn = CreateFrame("Button", nil, scrollChild)
+    table.insert(actionsSection.content, saveBtn)
     saveBtn:SetWidth(180)
     saveBtn:SetHeight(28)
     saveBtn:SetPoint("TOPLEFT", scrollChild, "TOPLEFT", 30, yOffset)
@@ -1074,6 +1177,9 @@ function MainMenu:CreateConfigTab()
             DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Settings saved successfully!", 0, 1, 0)
         end
     end)
+
+    -- After constructing all sections and content, layout once to stabilize positions
+    LayoutAllSections()
 
     menuFrame.configContent = content
 end

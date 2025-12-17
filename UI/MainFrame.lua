@@ -16,6 +16,7 @@ local updateTimer = 0
 local maxPlayersToShow = 20  -- Max number of players to display
 local showSelfOnly = false   -- Only show player's own stats
 local filterMode = "all"     -- "all", "group", "raid"
+local showSelfOnTop = false   -- Pin player entry to top of list
 
 ---Reloads settings from database into module-level variables
 ---@description Must be called after Database:SetSetting() to apply changes
@@ -37,6 +38,11 @@ function MainFrame:ReloadSettings()
     local savedShowSelfOnly = Database:GetSetting("showSelfOnly")
     if savedShowSelfOnly ~= nil then
         showSelfOnly = savedShowSelfOnly
+    end
+
+    local savedShowSelfOnTop = Database:GetSetting("showSelfOnTop")
+    if savedShowSelfOnTop ~= nil then
+        showSelfOnTop = savedShowSelfOnTop
     end
 end
 
@@ -414,7 +420,8 @@ function MainFrame:Create()
     local combatBtn = CreateFrame("Button", nil, frame)
     combatBtn:SetWidth(22)
     combatBtn:SetHeight(22)
-    combatBtn:SetPoint("LEFT", modeBtn, "RIGHT", 4, 0)
+    combatBtn:SetPoint("LEFT", modeBtn, "RIGHT", 1, 0)
+    combatBtn:EnableMouse(true)
     combatBtn:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
     combatBtn:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight", "ADD")
     combatBtn:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
@@ -440,7 +447,8 @@ function MainFrame:Create()
     local dpsToggleBtn = CreateFrame("Button", nil, frame)
     dpsToggleBtn:SetWidth(28)
     dpsToggleBtn:SetHeight(22)
-    dpsToggleBtn:SetPoint("LEFT", combatBtn, "RIGHT", 2, 0)
+    dpsToggleBtn:SetPoint("LEFT", combatBtn, "RIGHT", 1, 0)
+    dpsToggleBtn:EnableMouse(true)
     dpsToggleBtn:SetNormalTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Up")
     dpsToggleBtn:SetHighlightTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Highlight", "ADD")
     dpsToggleBtn:SetPushedTexture("Interface\\Buttons\\UI-Panel-MinimizeButton-Down")
@@ -479,7 +487,8 @@ function MainFrame:Create()
     local reportBtn = CreateFrame("Button", nil, frame)
     reportBtn:SetWidth(32)
     reportBtn:SetHeight(22)
-    reportBtn:SetPoint("LEFT", dpsToggleBtn, "RIGHT", 2, 0)
+    reportBtn:SetPoint("LEFT", dpsToggleBtn, "RIGHT", 1, 0)
+    reportBtn:EnableMouse(true)
 
     reportBtn:SetBackdrop({
         bgFile = "Interface\\Buttons\\UI-Panel-Button-Up",
@@ -515,9 +524,10 @@ function MainFrame:Create()
 
     -- Reset button (fifth button - clear data)
     local resetBtn = CreateFrame("Button", nil, frame)
-    resetBtn:SetWidth(22)
+    resetBtn:SetWidth(18)
     resetBtn:SetHeight(22)
-    resetBtn:SetPoint("LEFT", reportBtn, "RIGHT", 2, 0)
+    resetBtn:SetPoint("LEFT", reportBtn, "RIGHT", 1, 0)
+    resetBtn:EnableMouse(true)
 
     resetBtn:SetBackdrop({
         bgFile = "Interface\\Buttons\\UI-Panel-Button-Up",
@@ -1861,8 +1871,9 @@ function MainFrame:UpdateCombatHistoryList()
     if not frame or not frame.combatHistory then return end
 
     local ch = frame.combatHistory
-    local Database = DPSLight_Database
-    if not Database then return end
+    local DataStore = DPSLight_DataStore
+    if not DataStore then return end
+    local Utils = GetUtils()
 
     -- Clear existing buttons
     for i, btn in ipairs(ch.combatButtons) do
@@ -1874,52 +1885,78 @@ function MainFrame:UpdateCombatHistoryList()
     local btnHeight = 50
     local btnSpacing = 5
 
-    -- Get combat history
-    local history = Database:GetHistory()
-    if not history then history = {} end
+    local segments = DataStore:GetSegmentList() or {}
+    local inCombat = DataStore:IsInCombat()
+    local currentSegID = DataStore:GetCurrentSegment()
 
-    -- Current combat button (always first)
-    local currentBtn = CreateFrame("Button", nil, ch.scrollChild)
-    currentBtn:SetWidth(270)
-    currentBtn:SetHeight(btnHeight)
-    currentBtn:SetPoint("TOP", ch.scrollChild, "TOP", 0, yOffset)
-    currentBtn:SetBackdrop({
-        bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
-        edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
-        tile = true, tileSize = 8, edgeSize = 12,
-        insets = {left = 2, right = 2, top = 2, bottom = 2}
-    })
-    currentBtn:SetBackdropColor(0.2, 0.4, 0.2, 0.9)
-    currentBtn:SetBackdropBorderColor(0.4, 0.8, 0.4, 1)
+    -- Show "No history" message if no segments and not in combat
+    if table.getn(segments) == 0 and not inCombat then
+        local noDataText = ch.scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        noDataText:SetPoint("TOP", ch.scrollChild, "TOP", 0, -100)
+        noDataText:SetText("No Combat History")
+        noDataText:SetTextColor(0.5, 0.5, 0.5)
 
-    local currentText = currentBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-    currentText:SetPoint("TOP", currentBtn, "TOP", 0, -8)
-    currentText:SetText("Current Combat")
-    currentText:SetTextColor(0.5, 1, 0.5)
+        local helpText = ch.scrollChild:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+        helpText:SetPoint("TOP", noDataText, "BOTTOM", 0, -10)
+        helpText:SetText("Enter combat to start tracking")
+        helpText:SetTextColor(0.4, 0.4, 0.4)
 
-    local currentTime = currentBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
-    currentTime:SetPoint("TOP", currentText, "BOTTOM", 0, -4)
-    currentTime:SetText("In Progress")
-    currentTime:SetTextColor(0.8, 0.8, 0.8)
+        ch.scrollChild:SetHeight(200)
+        return
+    end
 
-    currentBtn:SetScript("OnClick", function()
-        ch:Hide()
-        -- Show current combat data
-    end)
+    -- Current combat button (only if in combat and segment is active)
+    if inCombat and currentSegID and currentSegID > 0 then
+        local meta = DataStore:GetSegmentMetadata(currentSegID) or {}
+        local currentBtn = CreateFrame("Button", nil, ch.scrollChild)
+        currentBtn:SetWidth(270)
+        currentBtn:SetHeight(btnHeight)
+        currentBtn:SetPoint("TOP", ch.scrollChild, "TOP", 0, yOffset)
+        currentBtn:SetBackdrop({
+            bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+            edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+            tile = true, tileSize = 8, edgeSize = 12,
+            insets = {left = 2, right = 2, top = 2, bottom = 2}
+        })
+        currentBtn:SetBackdropColor(0.2, 0.4, 0.2, 0.9)
+        currentBtn:SetBackdropBorderColor(0.4, 0.8, 0.4, 1)
 
-    currentBtn:SetScript("OnEnter", function()
-        this:SetBackdropColor(0.3, 0.5, 0.3, 1)
-    end)
-    currentBtn:SetScript("OnLeave", function()
-        this:SetBackdropColor(0.2, 0.4, 0.2, 0.9)
-    end)
+        local currentText = currentBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+        currentText:SetPoint("TOP", currentBtn, "TOP", 0, -8)
+        currentText:SetText("Current Combat")
+        currentText:SetTextColor(0.5, 1, 0.5)
 
-    table.insert(ch.combatButtons, currentBtn)
-    yOffset = yOffset - btnHeight - btnSpacing
+        local duration = Utils and Utils:GetCombatDuration() or (meta.duration or 0)
+        local durationText = string.format("%.0fs", duration)
+        local zone = meta.zone or "Unknown"
+
+        local currentTime = currentBtn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+        currentTime:SetPoint("TOP", currentText, "BOTTOM", 0, -4)
+        currentTime:SetText(zone .. " - " .. durationText)
+        currentTime:SetTextColor(0.8, 0.8, 0.8)
+
+        currentBtn:SetScript("OnClick", function()
+            MainFrame:ShowCombatDetails({
+                segmentID = currentSegID,
+                duration = duration,
+                timestamp = meta.startTime or GetTime(),
+            })
+        end)
+
+        currentBtn:SetScript("OnEnter", function()
+            this:SetBackdropColor(0.3, 0.5, 0.3, 1)
+        end)
+        currentBtn:SetScript("OnLeave", function()
+            this:SetBackdropColor(0.2, 0.4, 0.2, 0.9)
+        end)
+
+        table.insert(ch.combatButtons, currentBtn)
+        yOffset = yOffset - btnHeight - btnSpacing
+    end
 
     -- Previous combats
-    for i = 1, math.min(20, table.getn(history)) do
-        local segment = history[i]
+    for i = 1, math.min(20, table.getn(segments)) do
+        local segment = segments[i]
         if segment then
             local btn = CreateFrame("Button", nil, ch.scrollChild)
             btn:SetWidth(270)
@@ -1936,17 +1973,24 @@ function MainFrame:UpdateCombatHistoryList()
 
             local combatName = btn:CreateFontString(nil, "OVERLAY", "GameFontNormal")
             combatName:SetPoint("TOP", btn, "TOP", 0, -8)
-            combatName:SetText("Combat #" .. i)
+            combatName:SetText(string.format("Combat #%d", i))
             combatName:SetTextColor(1, 1, 1)
 
             local combatInfo = btn:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
             combatInfo:SetPoint("TOP", combatName, "BOTTOM", 0, -4)
             local duration = segment.duration or 0
             local durationStr = string.format("%.0fs", duration)
-            combatInfo:SetText(date("%H:%M", segment.timestamp or 0) .. " - " .. durationStr)
+            local boss = segment.boss and (" - " .. segment.boss) or ""
+            combatInfo:SetText(date("%H:%M", segment.startTime or 0) .. " - " .. durationStr .. boss)
             combatInfo:SetTextColor(0.7, 0.7, 0.7)
 
-            btn.segmentData = segment
+            btn.segmentData = {
+                segmentID = segment.id,
+                duration = segment.duration,
+                timestamp = segment.startTime,
+                boss = segment.boss,
+                zone = segment.zone,
+            }
             btn:SetScript("OnClick", function()
                 MainFrame:ShowCombatDetails(this.segmentData)
             end)
@@ -2028,35 +2072,45 @@ function MainFrame:ShowCombatDetails(segmentData)
 
     -- Build stats text
     local text = ""
-    text = text .. "|cFFFFD700Duration:|r " .. string.format("%.1fs", segmentData.duration or 0) .. "\n"
-    text = text .. "|cFFFFD700Time:|r " .. date("%H:%M:%S", segmentData.timestamp or 0) .. "\n\n"
 
-    -- Get detailed stats from segment
     local DataStore = DPSLight_DataStore
+    local meta = (DataStore and segmentData.segmentID) and DataStore:GetSegmentMetadata(segmentData.segmentID) or nil
+    local duration = segmentData.duration or (meta and meta.duration) or 0
+    local timestamp = segmentData.timestamp or (meta and meta.startTime) or GetTime()
+    local boss = meta and meta.boss or nil
+    local zone = meta and meta.zone or nil
+
+    text = text .. "|cFFFFD700Duration:|r " .. string.format("%.1fs", duration) .. "\n"
+    text = text .. "|cFFFFD700Time:|r " .. date("%H:%M:%S", timestamp) .. "\n"
+    if zone then
+        text = text .. "|cFFFFD700Zone:|r " .. zone .. "\n"
+    end
+    if boss then
+        text = text .. "|cFFFFD700Boss:|r " .. boss .. "\n"
+    end
+    text = text .. "\n"
+
     if DataStore and segmentData.segmentID then
-        -- Damage stats
         local damageData = DataStore:GetTopN("damage", 10, segmentData.segmentID)
         if damageData and table.getn(damageData) > 0 then
             text = text .. "|cFFFF6060=== Damage ===|r\n"
             for i, entry in ipairs(damageData) do
-                local dps = (segmentData.duration and segmentData.duration > 0) and (entry.total / segmentData.duration) or 0
+                local dps = (duration > 0) and (entry.total / duration) or 0
                 text = text .. string.format("%d. %s: %d (%.1f DPS)\n", i, entry.username, entry.total, dps)
             end
             text = text .. "\n"
         end
 
-        -- Healing stats
         local healingData = DataStore:GetTopN("healing", 10, segmentData.segmentID)
         if healingData and table.getn(healingData) > 0 then
             text = text .. "|cFF60FF60=== Healing ===|r\n"
             for i, entry in ipairs(healingData) do
-                local hps = (segmentData.duration and segmentData.duration > 0) and (entry.total / segmentData.duration) or 0
+                local hps = (duration > 0) and (entry.total / duration) or 0
                 text = text .. string.format("%d. %s: %d (%.1f HPS)\n", i, entry.username, entry.total, hps)
             end
             text = text .. "\n"
         end
 
-        -- Deaths
         local deathsData = DataStore:GetTopN("deaths", 10, segmentData.segmentID)
         if deathsData and table.getn(deathsData) > 0 then
             text = text .. "|cFFFF0000=== Deaths ===|r\n"
@@ -2481,20 +2535,49 @@ function MainFrame:CreateSecondaryWindow(mode)
         SnapToNearbyWindows(secFrame)
     end)
 
-    -- Create scroll list for secondary window
-    local VirtualScroll = GetVirtualScroll()
-    if VirtualScroll then
-        local secScrollList = VirtualScroll:New(secFrame, 360, 370, 18)
-        if secScrollList then
-            secScrollList:GetFrame():SetPoint("TOPLEFT", secFrame, "TOPLEFT", 10, -40)
-            secFrame.scrollList = secScrollList
-            DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Scroll list created", 0, 1, 0)
+    -- Create scroll frame (same structure as main window)
+    local scrollFrame = CreateFrame("ScrollFrame", nil, secFrame)
+    scrollFrame:SetPoint("TOPLEFT", secFrame, "TOPLEFT", 10, -35)
+    scrollFrame:SetPoint("BOTTOMRIGHT", secFrame, "BOTTOMRIGHT", -10, 35)
+    scrollFrame:EnableMouseWheel(true)
+
+    local scrollChild = CreateFrame("Frame", nil, scrollFrame)
+    scrollChild:SetWidth(1)
+    scrollChild:SetHeight(1)
+    scrollFrame:SetScrollChild(scrollChild)
+
+    -- Scroll bar
+    local scrollBar = CreateFrame("Slider", nil, scrollFrame)
+    scrollBar:SetPoint("TOPRIGHT", scrollFrame, "TOPRIGHT", -2, -16)
+    scrollBar:SetPoint("BOTTOMRIGHT", scrollFrame, "BOTTOMRIGHT", -2, 16)
+    scrollBar:SetWidth(16)
+    scrollBar:SetOrientation("VERTICAL")
+    scrollBar:SetThumbTexture("Interface\\Buttons\\UI-ScrollBar-Knob")
+    scrollBar:SetBackdrop({
+        bgFile = "Interface\\Buttons\\UI-SliderBar-Background",
+        edgeFile = "Interface\\Buttons\\UI-SliderBar-Border",
+        tile = true, tileSize = 8, edgeSize = 8,
+        insets = {left = 3, right = 3, top = 6, bottom = 6}
+    })
+    scrollBar:SetValueStep(1)
+    scrollBar:SetScript("OnValueChanged", function()
+        scrollFrame:SetVerticalScroll(this:GetValue())
+    end)
+
+    scrollFrame:SetScript("OnMouseWheel", function()
+        local current = scrollBar:GetValue()
+        local minVal, maxVal = scrollBar:GetMinMaxValues()
+        if arg1 > 0 then
+            scrollBar:SetValue(math.max(minVal, current - 20))
         else
-            DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Failed to create scroll list", 1, 0, 0)
+            scrollBar:SetValue(math.min(maxVal, current + 20))
         end
-    else
-        DEFAULT_CHAT_FRAME:AddMessage("DPSLight: VirtualScroll not found", 1, 0, 0)
-    end
+    end)
+
+    secFrame.scrollFrame = scrollFrame
+    secFrame.scrollChild = scrollChild
+    secFrame.scrollBar = scrollBar
+    secFrame.rows = {}
 
     -- Store mode
     secFrame.mode = mode
@@ -2520,21 +2603,27 @@ function MainFrame:CreateSecondaryWindow(mode)
     end)
 
     secFrame:Show()
-    DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Secondary window created for " .. mode, 0, 1, 0)
+    MainFrame:UpdateSecondaryWindow(secFrame)
 end
 
 -- Update secondary window
 function MainFrame:UpdateSecondaryWindow(secFrame)
-    if not secFrame or not secFrame:IsVisible() or not secFrame.scrollList then return end
+    if not secFrame or not secFrame:IsVisible() or not secFrame.scrollChild then return end
+
+    -- Clear existing rows
+    for i, row in ipairs(secFrame.rows) do
+        row:Hide()
+    end
 
     local mode = secFrame.mode
     local data = {}
+    local Utils = GetUtils()
+    if not Utils then return end
 
     -- Get data based on mode (reuse logic from UpdateDisplay)
     if mode == "damage" then
         local Damage = GetDamage()
-        local Utils = GetUtils()
-        if not Damage or not Utils then return end
+        if not Damage then return end
 
         local damageData = Damage:GetSortedData()
         if not damageData then return end
@@ -2562,8 +2651,7 @@ function MainFrame:UpdateSecondaryWindow(secFrame)
         end
     elseif mode == "healing" then
         local Healing = GetHealing()
-        local Utils = GetUtils()
-        if not Healing or not Utils then return end
+        if not Healing then return end
 
         local healingData = Healing:GetSortedData()
         if not healingData then return end
@@ -2645,7 +2733,135 @@ function MainFrame:UpdateSecondaryWindow(secFrame)
         end
     end
 
-    secFrame.scrollList:SetData(data)
+    -- Create rows for data (same structure as main window)
+    local rowHeight = 18
+    local yOffset = -5
+    local frameWidth = secFrame:GetWidth() - 30
+
+    for i, entry in ipairs(data) do
+        local row = secFrame.rows[i]
+        if not row then
+            row = CreateFrame("Frame", nil, secFrame.scrollChild)
+            row:SetHeight(rowHeight)
+            row:SetBackdrop({
+                bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+                edgeFile = nil,
+                tile = true, tileSize = 16, edgeSize = 0,
+                insets = {left = 0, right = 0, top = 0, bottom = 0}
+            })
+
+            -- Rank number
+            row.rank = row:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+            row.rank:SetPoint("LEFT", row, "LEFT", 5, 0)
+            row.rank:SetWidth(20)
+            row.rank:SetJustifyH("RIGHT")
+
+            -- Player name
+            row.name = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.name:SetPoint("LEFT", row.rank, "RIGHT", 5, 0)
+            row.name:SetWidth(120)
+            row.name:SetJustifyH("LEFT")
+
+            -- Value
+            row.value = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+            row.value:SetPoint("RIGHT", row, "RIGHT", -5, 0)
+            row.value:SetWidth(70)
+            row.value:SetJustifyH("RIGHT")
+
+            -- Percent bar
+            row.bar = CreateFrame("StatusBar", nil, row)
+            row.bar:SetHeight(rowHeight - 2)
+            row.bar:SetPoint("LEFT", row.name, "RIGHT", 5, 0)
+            row.bar:SetPoint("RIGHT", row.value, "LEFT", -5, 0)
+            row.bar:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+            row.bar:SetMinMaxValues(0, 100)
+            row.bar:SetValue(0)
+
+            secFrame.rows[i] = row
+        end
+
+        row:SetWidth(frameWidth)
+        row:SetPoint("TOPLEFT", secFrame.scrollChild, "TOPLEFT", 5, yOffset)
+
+        -- Set colors (alternate row shading)
+        local bgAlpha = 0.05
+        if (i / 2) == math.floor(i / 2) then
+            bgAlpha = 0.15
+        end
+        row:SetBackdropColor(0, 0, 0, bgAlpha)
+
+        -- Set text
+        row.rank:SetText(i)
+        row.name:SetText(entry.name or "Unknown")
+
+        -- Format value
+        local valueText
+        if entry.value >= 1000000 then
+            valueText = string.format("%.1fM", entry.value / 1000000)
+        elseif entry.value >= 1000 then
+            valueText = string.format("%.1fk", entry.value / 1000)
+        else
+            valueText = string.format("%d", entry.value)
+        end
+        row.value:SetText(valueText)
+
+        -- Set colors
+        if entry.classColor then
+            row.name:SetTextColor(entry.classColor.r, entry.classColor.g, entry.classColor.b)
+        else
+            row.name:SetTextColor(1, 1, 1)
+        end
+
+        row.value:SetTextColor(1, 1, 1)
+        row.rank:SetTextColor(0.7, 0.7, 0.7)
+
+        -- Set bar color and value
+        if entry.color then
+            row.bar:SetStatusBarColor(entry.color.r, entry.color.g, entry.color.b, 0.5)
+        end
+        row.bar:SetValue(entry.percent or 0)
+
+        row:Show()
+        yOffset = yOffset - rowHeight
+    end
+
+    -- Update scroll child height
+    local totalHeight = math.abs(yOffset) + 10
+    secFrame.scrollChild:SetHeight(totalHeight)
+
+    -- Update scroll bar
+    local maxScroll = math.max(0, totalHeight - secFrame.scrollFrame:GetHeight())
+    if maxScroll > 0 then
+        secFrame.scrollBar:Show()
+        secFrame.scrollBar:SetMinMaxValues(0, maxScroll)
+        secFrame.scrollBar:SetValue(math.min(secFrame.scrollBar:GetValue(), maxScroll))
+    else
+        secFrame.scrollBar:Hide()
+        secFrame.scrollBar:SetValue(0)
+    end
+end
+
+-- Move player entry to the top of a list (used when showSelfOnTop is enabled)
+local function PinSelfEntry(entries)
+    if not showSelfOnTop then return end
+    if not entries then return end
+
+    local playerName = UnitName("player")
+    if not playerName then return end
+
+    local playerIndex = nil
+    for i, entry in ipairs(entries) do
+        local name = entry.username or entry.name
+        if name == playerName then
+            playerIndex = i
+            break
+        end
+    end
+
+    if playerIndex and playerIndex > 1 then
+        local selfEntry = table.remove(entries, playerIndex)
+        table.insert(entries, 1, selfEntry)
+    end
 end
 
 -- Update display
@@ -2709,6 +2925,8 @@ function MainFrame:UpdateDisplay()
                 end
             end
         end
+
+        PinSelfEntry(filteredData)
 
         for i, entry in ipairs(filteredData) do
             -- Show DPS or Total based on toggle
@@ -2799,6 +3017,8 @@ function MainFrame:UpdateDisplay()
             end
         end
 
+        PinSelfEntry(filteredData)
+
         for i, entry in ipairs(filteredData) do
             -- Show HPS or Total based on toggle
             local displayValue
@@ -2843,6 +3063,8 @@ function MainFrame:UpdateDisplay()
         local dispelsData = Dispels:GetSortedData()
         if not dispelsData then return end
 
+        PinSelfEntry(dispelsData)
+
         for i, entry in ipairs(dispelsData) do
             local total = entry.total or Dispels:GetTotal(nil, entry.userID)
             local percent = Dispels:GetPercent(nil, entry.userID)
@@ -2870,6 +3092,8 @@ function MainFrame:UpdateDisplay()
         local decurseData = Decurse:GetSortedData()
         if not decurseData then return end
 
+        PinSelfEntry(decurseData)
+
         for i, entry in ipairs(decurseData) do
             local total = entry.total or Decurse:GetTotal(nil, entry.userID)
             local percent = Decurse:GetPercent(nil, entry.userID)
@@ -2896,6 +3120,8 @@ function MainFrame:UpdateDisplay()
 
         local deathData = Deaths:GetSortedData()
         if not deathData then return end
+
+        PinSelfEntry(deathData)
 
         for i, entry in ipairs(deathData) do
             local deathCount = entry.deaths or 0

@@ -13,6 +13,7 @@ end
 local userCache = {}      -- [username] = userID
 local abilityCache = {}   -- [abilityname] = abilityID
 local guidCache = {}      -- [GUID] = username (for SuperWoW)
+local petOwners = {}      -- [petName] = ownerName
 
 local nextUserID = 1
 local nextAbilityID = 1
@@ -42,7 +43,7 @@ local inCombat = false
 -- Get or create user ID
 function DataStore:GetUserID(username)
     if not username or username == "" then return nil end
-    
+
     local userID = userCache[username]
     if not userID then
         userID = nextUserID
@@ -50,7 +51,7 @@ function DataStore:GetUserID(username)
         userNames[userID] = username
         nextUserID = nextUserID + 1
     end
-    
+
     return userID
 end
 
@@ -62,7 +63,7 @@ end
 -- Get or create ability ID
 function DataStore:GetAbilityID(abilityName)
     if not abilityName or abilityName == "" then return nil end
-    
+
     local abilityID = abilityCache[abilityName]
     if not abilityID then
         abilityID = nextAbilityID
@@ -70,7 +71,7 @@ function DataStore:GetAbilityID(abilityName)
         abilityNames[abilityID] = abilityName
         nextAbilityID = nextAbilityID + 1
     end
-    
+
     return abilityID
 end
 
@@ -90,26 +91,99 @@ function DataStore:GetUsernameByGUID(guid)
     return guidCache[guid]
 end
 
+-- Pet management functions
+function DataStore:RegisterPet(petName, ownerName)
+    if petName and ownerName then
+        petOwners[petName] = ownerName
+    end
+end
+
+function DataStore:GetPetOwner(petName)
+    return petOwners[petName]
+end
+
+function DataStore:IsPet(username)
+    return petOwners[username] ~= nil
+end
+
+-- Scan for pets in group/raid
+function DataStore:ScanPets()
+    -- Scan player's pet
+    if UnitExists("pet") then
+        local petName = UnitName("pet")
+        local ownerName = UnitName("player")
+        if petName and ownerName then
+            self:RegisterPet(petName, ownerName)
+        end
+    end
+
+    -- Scan party pets
+    local numParty = GetNumPartyMembers()
+    for i = 1, numParty do
+        local unit = "party" .. i
+        if UnitExists(unit .. "pet") then
+            local petName = UnitName(unit .. "pet")
+            local ownerName = UnitName(unit)
+            if petName and ownerName then
+                self:RegisterPet(petName, ownerName)
+            end
+        end
+    end
+
+    -- Scan raid pets
+    local numRaid = GetNumRaidMembers()
+    if numRaid > 0 then
+        for i = 1, numRaid do
+            local unit = "raid" .. i
+            if UnitExists(unit .. "pet") then
+                local petName = UnitName(unit .. "pet")
+                local ownerName = UnitName(unit)
+                if petName and ownerName then
+                    self:RegisterPet(petName, ownerName)
+                end
+            end
+        end
+    end
+end
+
+-- Get effective username (owner if pet and merge enabled, otherwise original)
+function DataStore:GetEffectiveUsername(username)
+    local Database = DPSLight_Database
+    if not Database or not Database:GetSetting("mergePetDamage") then
+        return username
+    end
+
+    local owner = petOwners[username]
+    if owner then
+        return owner
+    end
+
+    return username
+end
+
 -- Add damage data
 function DataStore:AddDamage(username, targetName, abilityName, amount, isCrit, damageType)
+    -- Use effective username (owner if pet and merge enabled)
+    username = self:GetEffectiveUsername(username)
+
     local userID = self:GetUserID(username)
     local targetID = self:GetUserID(targetName)
     local abilityID = self:GetAbilityID(abilityName)
-    
+
     if not userID or not abilityID then return end
-    
+
     local segment = dataStore.damage[currentSegment]
     if not segment then
         segment = {}
         dataStore.damage[currentSegment] = segment
     end
-    
+
     local userData = segment[userID]
     if not userData then
         userData = {}
         segment[userID] = userData
     end
-    
+
     local abilityData = userData[abilityID]
     if not abilityData then
         abilityData = {
@@ -122,7 +196,7 @@ function DataStore:AddDamage(username, targetName, abilityName, amount, isCrit, 
         }
         userData[abilityID] = abilityData
     end
-    
+
     -- Update aggregates
     abilityData.total = abilityData.total + amount
     abilityData.hits = abilityData.hits + 1
@@ -131,7 +205,7 @@ function DataStore:AddDamage(username, targetName, abilityName, amount, isCrit, 
     end
     abilityData.min = min(abilityData.min, amount)
     abilityData.max = max(abilityData.max, amount)
-    
+
     -- Track per-target data
     if targetID then
         local targetData = abilityData.targets[targetID]
@@ -142,13 +216,13 @@ function DataStore:AddDamage(username, targetName, abilityName, amount, isCrit, 
         targetData.total = targetData.total + amount
         targetData.hits = targetData.hits + 1
     end
-    
+
     -- Update advanced stats
     local AdvancedStats = DPSLight_AdvancedStats
     if AdvancedStats then
         AdvancedStats:RecordDamage(username, amount, GetTime())
     end
-    
+
     -- Register target in boss detector
     local BossDetector = DPSLight_BossDetector
     if BossDetector and targetName then
@@ -161,21 +235,21 @@ function DataStore:AddHealing(username, targetName, abilityName, amount, overhea
     local userID = self:GetUserID(username)
     local targetID = self:GetUserID(targetName)
     local abilityID = self:GetAbilityID(abilityName)
-    
+
     if not userID or not abilityID then return end
-    
+
     local segment = dataStore.healing[currentSegment]
     if not segment then
         segment = {}
         dataStore.healing[currentSegment] = segment
     end
-    
+
     local userData = segment[userID]
     if not userData then
         userData = {}
         segment[userID] = userData
     end
-    
+
     local abilityData = userData[abilityID]
     if not abilityData then
         abilityData = {
@@ -188,7 +262,7 @@ function DataStore:AddHealing(username, targetName, abilityName, amount, overhea
         }
         userData[abilityID] = abilityData
     end
-    
+
     local effective = amount - (overhealing or 0)
     abilityData.total = abilityData.total + amount
     abilityData.effective = abilityData.effective + effective
@@ -197,7 +271,7 @@ function DataStore:AddHealing(username, targetName, abilityName, amount, overhea
     if isCrit then
         abilityData.crits = abilityData.crits + 1
     end
-    
+
     if targetID then
         local targetData = abilityData.targets[targetID]
         if not targetData then
@@ -214,25 +288,25 @@ end
 function DataStore:AddDeath(username, timestamp, killer, killerAbility)
     local userID = self:GetUserID(username)
     if not userID then return end
-    
+
     local segment = dataStore.deaths[currentSegment]
     if not segment then
         segment = {}
         dataStore.deaths[currentSegment] = segment
     end
-    
+
     local deathList = segment[userID]
     if not deathList then
         deathList = {}
         segment[userID] = deathList
     end
-    
+
     table.insert(deathList, {
         timestamp = timestamp or GetTime(),
         killer = killer,
         killerAbility = killerAbility,
     })
-    
+
     -- Also call Deaths module
     if DPSLight_Deaths and DPSLight_Deaths.AddDeath then
         DPSLight_Deaths:AddDeath(username, timestamp)
@@ -257,7 +331,7 @@ end
 function DataStore:GetTotalDamage(segment, userID)
     local data = self:GetDamageData(segment, userID)
     if not data then return 0 end
-    
+
     local total = 0
     for abilityID, abilityData in pairs(data) do
         total = total + abilityData.total
@@ -269,7 +343,7 @@ end
 function DataStore:GetTotalHealing(segment, userID)
     local data = self:GetHealingData(segment, userID)
     if not data then return 0 end
-    
+
     local total = 0
     for abilityID, abilityData in pairs(data) do
         total = total + abilityData.effective
@@ -282,24 +356,24 @@ function DataStore:GetSortedDamage(segment)
     segment = segment or currentSegment
     local segmentData = dataStore.damage[segment]
     if not segmentData then return {} end
-    
+
     local ObjectPool = GetObjectPool()
     if not ObjectPool then return {} end
     local result = ObjectPool:GetTable(50)
-    
+
     for userID, userData in pairs(segmentData) do
         local total = 0
         for abilityID, abilityData in pairs(userData) do
             total = total + abilityData.total
         end
-        
+
         table.insert(result, {
             userID = userID,
             username = userNames[userID],
             total = total,
         })
     end
-    
+
     table.sort(result, function(a, b) return a.total > b.total end)
     return result
 end
@@ -309,24 +383,24 @@ function DataStore:GetSortedHealing(segment)
     segment = segment or currentSegment
     local segmentData = dataStore.healing[segment]
     if not segmentData then return {} end
-    
+
     local ObjectPool = GetObjectPool()
     if not ObjectPool then return {} end
     local result = ObjectPool:GetTable(50)
-    
+
     for userID, userData in pairs(segmentData) do
         local total = 0
         for abilityID, abilityData in pairs(userData) do
             total = total + abilityData.effective
         end
-        
+
         table.insert(result, {
             userID = userID,
             username = userNames[userID],
             total = total,
         })
     end
-    
+
     table.sort(result, function(a, b) return a.total > b.total end)
     return result
 end
@@ -352,18 +426,21 @@ end
 -- Start new combat segment
 function DataStore:StartCombat()
     if inCombat then return end
-    
+
     inCombat = true
     combatStartTime = GetTime()
-    
+
+    -- Scan for pets at combat start
+    self:ScanPets()
+
     -- Find next available segment ID
     local nextSegment = 1
     while segmentMetadata[nextSegment] do
         nextSegment = nextSegment + 1
     end
-    
+
     currentSegment = nextSegment
-    
+
     -- Initialize metadata
     segmentMetadata[currentSegment] = {
         startTime = combatStartTime,
@@ -374,26 +451,29 @@ function DataStore:StartCombat()
         totalDPS = 0,
         totalHPS = 0,
     }
-    
-    DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Combat started (Segment " .. currentSegment .. ")", 0, 1, 0)
+
+    local Database = DPSLight_Database
+    if not Database or not Database:GetSetting("hideCombatMessages") then
+        DEFAULT_CHAT_FRAME:AddMessage("DPSLight: Combat started (Segment " .. currentSegment .. ")", 0, 1, 0)
+    end
 end
 
 -- End combat segment
 function DataStore:EndCombat()
     if not inCombat or not combatStartTime then return end
-    
+
     inCombat = false
     local endTime = GetTime()
     local duration = endTime - combatStartTime
-    
+
     if segmentMetadata[currentSegment] then
         segmentMetadata[currentSegment].endTime = endTime
         segmentMetadata[currentSegment].duration = duration
-        
+
         -- Calculate total DPS/HPS for this segment
         local totalDmg = 0
         local totalHeal = 0
-        
+
         if dataStore.damage[currentSegment] then
             for userID, userData in pairs(dataStore.damage[currentSegment]) do
                 for abilityID, abilityData in pairs(userData) do
@@ -401,7 +481,7 @@ function DataStore:EndCombat()
                 end
             end
         end
-        
+
         if dataStore.healing[currentSegment] then
             for userID, userData in pairs(dataStore.healing[currentSegment]) do
                 for abilityID, abilityData in pairs(userData) do
@@ -409,12 +489,12 @@ function DataStore:EndCombat()
                 end
             end
         end
-        
+
         if duration > 0 then
             segmentMetadata[currentSegment].totalDPS = totalDmg / duration
             segmentMetadata[currentSegment].totalHPS = totalHeal / duration
         end
-        
+
         -- Detect boss name (most damaged target)
         local BossDetector = DPSLight_BossDetector
         if BossDetector then
@@ -423,29 +503,32 @@ function DataStore:EndCombat()
                 segmentMetadata[currentSegment].boss = bossName
             end
         end
-        
-        DEFAULT_CHAT_FRAME:AddMessage(string.format("DPSLight: Combat ended - %ds, %.1f DPS, %.1f HPS", 
-            duration, segmentMetadata[currentSegment].totalDPS, segmentMetadata[currentSegment].totalHPS), 0, 1, 0)
+
+        local Database = DPSLight_Database
+        if not Database or not Database:GetSetting("hideCombatMessages") then
+            DEFAULT_CHAT_FRAME:AddMessage(string.format("DPSLight: Combat ended - %ds, %.1f DPS, %.1f HPS",
+                duration, segmentMetadata[currentSegment].totalDPS, segmentMetadata[currentSegment].totalHPS), 0, 1, 0)
+        end
     end
-    
+
     -- Clean old segments if too many
     local segmentCount = 0
     for _ in pairs(segmentMetadata) do
         segmentCount = segmentCount + 1
     end
-    
+
     if segmentCount > maxSegments then
         -- Find oldest segment and remove
         local oldestSegment = nil
         local oldestTime = GetTime()
-        
+
         for segID, meta in pairs(segmentMetadata) do
             if meta.startTime < oldestTime then
                 oldestTime = meta.startTime
                 oldestSegment = segID
             end
         end
-        
+
         if oldestSegment then
             segmentMetadata[oldestSegment] = nil
             dataStore.damage[oldestSegment] = nil
@@ -453,7 +536,7 @@ function DataStore:EndCombat()
             dataStore.deaths[oldestSegment] = nil
         end
     end
-    
+
     -- Return to overall segment
     currentSegment = 0
 end
@@ -461,7 +544,7 @@ end
 -- Get segment list
 function DataStore:GetSegmentList()
     local segments = {}
-    
+
     for segID, meta in pairs(segmentMetadata) do
         table.insert(segments, {
             id = segID,
@@ -474,12 +557,12 @@ function DataStore:GetSegmentList()
             totalHPS = meta.totalHPS,
         })
     end
-    
+
     -- Sort by start time (newest first)
     table.sort(segments, function(a, b)
         return (a.startTime or 0) > (b.startTime or 0)
     end)
-    
+
     return segments
 end
 
@@ -496,7 +579,7 @@ end
 -- Clear segment data
 function DataStore:ClearSegment(segment)
     segment = segment or currentSegment
-    
+
     for dataType, segments in pairs(dataStore) do
         segments[segment] = nil
     end
@@ -509,11 +592,11 @@ function DataStore:Reset()
             segments[k] = nil
         end
     end
-    
+
     currentSegment = 1
     nextUserID = 1
     nextAbilityID = 1
-    
+
     for k in pairs(userCache) do userCache[k] = nil end
     for k in pairs(abilityCache) do abilityCache[k] = nil end
     for k in pairs(guidCache) do guidCache[k] = nil end
@@ -524,15 +607,15 @@ end
 -- Get memory usage estimate
 function DataStore:GetMemoryUsage()
     local total = 0
-    
+
     -- Count users
     local userCount = 0
     for _ in pairs(userCache) do userCount = userCount + 1 end
-    
+
     -- Count abilities
     local abilityCount = 0
     for _ in pairs(abilityCache) do abilityCount = abilityCount + 1 end
-    
+
     -- Estimate data size
     for dataType, segments in pairs(dataStore) do
         for segment, segmentData in pairs(segments) do
@@ -544,13 +627,59 @@ function DataStore:GetMemoryUsage()
             end
         end
     end
-    
+
     return {
         users = userCount,
         abilities = abilityCount,
         dataEntries = total,
         estimatedKB = (total * 100 + userCount * 50 + abilityCount * 50) / 1024
     }
+end
+
+-- Get top N entries for a data type and segment (used by Combat Details)
+function DataStore:GetTopN(dataType, n, segmentID)
+    local segments = dataStore[dataType]
+    if not segments then return {} end
+
+    segmentID = segmentID or currentSegment
+    local segmentData = segments[segmentID]
+    if not segmentData then return {} end
+
+    n = n or 10
+    local results = {}
+
+    for userID, userData in pairs(segmentData) do
+        local total = 0
+
+        if dataType == "damage" then
+            for _, abilityData in pairs(userData) do
+                total = total + (abilityData.total or 0)
+            end
+        elseif dataType == "healing" then
+            for _, abilityData in pairs(userData) do
+                total = total + (abilityData.effective or abilityData.total or 0)
+            end
+        elseif dataType == "deaths" then
+            total = table.getn(userData)
+        end
+
+        table.insert(results, {
+            userID = userID,
+            username = userNames[userID] or userID,
+            total = total,
+        })
+    end
+
+    table.sort(results, function(a, b)
+        return (a.total or 0) > (b.total or 0)
+    end)
+
+    local top = {}
+    for i = 1, math.min(n, table.getn(results)) do
+        table.insert(top, results[i])
+    end
+
+    return top
 end
 
 return DataStore

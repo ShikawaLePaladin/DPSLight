@@ -26,6 +26,9 @@ local defaultDB = {
         showFooter = true,
         maxPlayers = 20,
         showSelfOnly = false,
+        showSelfOnTop = false,
+        mergePetDamage = false,
+        hideCombatMessages = false,
         filterMode = "all",
         buttonVisibility = {
             modeBtn = true,
@@ -88,9 +91,9 @@ function Database:SaveCombatSegment(name, duration, damageData, healingData)
         damage = damageData,
         healing = healingData,
     }
-    
+
     table.insert(DPSLightDB.combatHistory, 1, segment)
-    
+
     -- Keep only last 50 combats
     while table.getn(DPSLightDB.combatHistory) > 50 do
         table.remove(DPSLightDB.combatHistory)
@@ -106,7 +109,7 @@ function Database:UpdateRecords(dps, hps, playerName, duration)
             timestamp = time(),
         }
     end
-    
+
     if hps > DPSLightDB.records.highestHPS.value then
         DPSLightDB.records.highestHPS = {
             value = hps,
@@ -114,7 +117,7 @@ function Database:UpdateRecords(dps, hps, playerName, duration)
             timestamp = time(),
         }
     end
-    
+
     if duration > DPSLightDB.records.longestCombat.value then
         DPSLightDB.records.longestCombat = {
             value = duration,
@@ -142,7 +145,7 @@ function Database:SetSetting(key, value)
     for part in string.gfind(key, "[^.]+") do
         table.insert(parts, part)
     end
-    
+
     local current = DPSLightDB.settings
     for i = 1, table.getn(parts) - 1 do
         if not current[parts[i]] then
@@ -150,7 +153,7 @@ function Database:SetSetting(key, value)
         end
         current = current[parts[i]]
     end
-    
+
     current[parts[table.getn(parts)]] = value
 end
 
@@ -182,6 +185,7 @@ function Database:ResetAllSettings()
             showFooter = true,
             maxPlayers = 20,
             showSelfOnly = false,
+            showSelfOnTop = false,
             filterMode = "all",
             scale = 1.0,
             buttonVisibility = {
